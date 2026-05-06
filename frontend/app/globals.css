@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Base ─────────────────────────────────────────────────────────────── */
+:root {
+  --sidebar-width: 16rem; /* 256px = w-64 */
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: #f8f9fa;
+  color: #191c1d;
+  font-family: 'Inter', sans-serif;
+}
+
+/* ─── Material Symbols ─────────────────────────────────────────────────── */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+  vertical-align: middle;
+}
+
+.material-symbols-filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ─── Gradient helpers ─────────────────────────────────────────────────── */
+.btn-gradient {
+  background: linear-gradient(135deg, #000a1e 0%, #002147 100%);
+}
+
+.btn-gradient-amber {
+  background: linear-gradient(135deg, #fed65b 0%, #e9c349 100%);
+}
+
+/* ─── Glass panel ──────────────────────────────────────────────────────── */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+}
+
+/* ─── OTP inputs ───────────────────────────────────────────────────────── */
+.otp-input {
+  width: 3.25rem;
+  height: 3.75rem;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  border: 2px solid #c4c6cf;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  color: #000a1e;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: 'Inter', monospace;
+}
+
+.otp-input:focus {
+  outline: none;
+  border-color: #000a1e;
+  box-shadow: 0 0 0 3px rgba(0, 10, 30, 0.12);
+}
+
+.otp-input.filled {
+  border-color: #000a1e;
+  background: #eff6ff;
+}
+
+/* ─── Progress bar ─────────────────────────────────────────────────────── */
+.progress-bar {
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f3f4f5;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c4c6cf;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #74777f;
+}
+
+/* ─── Selection ────────────────────────────────────────────────────────── */
+::selection {
+  background: #fed65b;
+  color: #241a00;
+}
+
+/* ─── Vote success animation ───────────────────────────────────────────── */
+@keyframes vote-success {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.vote-success {
+  animation: vote-success 0.5s ease-in-out;
+}
+
+/* ─── Table rows ───────────────────────────────────────────────────────── */
+.registry-row:hover {
+  background: #f3f4f5;
+}
+
+/* ─── Sidebar active state ─────────────────────────────────────────────── */
+.nav-link-active {
+  background: #ffffff;
+  color: #000a1e;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}

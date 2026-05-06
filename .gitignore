@@ -1,0 +1,80 @@
+# =============================================================================
+# University Voting System — .gitignore
+# =============================================================================
+
+# ── Secrets & Environment — NEVER commit ─────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+.env.*.local
+# Keep only .env.example (the safe template)
+!.env.example
+
+# ── n8n (removed — kept for reference only) ──────────────────────────────────
+n8n/workflows/email_service.json
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Runtime / process ─────────────────────────────────────────────────────────
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# ── Test coverage ─────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Generated keys & SSL certificates (keep out of git) ──────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+private.pem
+public.pem
+jwt-private.pem
+jwt-public.pem
+nginx/ssl/
+
+# ── Docker volumes & local data ───────────────────────────────────────────────
+postgres_data/
+redis_data/
+rabbitmq_data/
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/
+.mcp.json
+
+# ── OS files ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Local dev / setup scripts (not for repo) ──────────────────────────────────
+/generate-keys.bat
+/setup.js
+/start-dev.bat

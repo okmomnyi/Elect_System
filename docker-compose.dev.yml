@@ -1,0 +1,66 @@
+# Development overrides - use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development
+      DEBUG: "voting:*"
+    volumes:
+      - ./backend/src:/app/src:ro
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder
+    command: ["npm", "run", "dev:worker"]
+    environment:
+      NODE_ENV: development
+      DEBUG: "voting:*"
+    volumes:
+      - ./backend/src:/app/src:ro
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: deps
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost
+      NEXT_PUBLIC_WS_URL: http://localhost
+    volumes:
+      - ./frontend/app:/app/app:ro
+      - ./frontend/components:/app/components:ro
+      - ./frontend/hooks:/app/hooks:ro
+      - ./frontend/lib:/app/lib:ro
+    ports:
+      - "3002:3000"
+
+  nginx:
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
