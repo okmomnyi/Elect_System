@@ -20,6 +20,15 @@ router.post('/request-otp', rateLimitAuth, rateLimitOtp, authController.requestO
 // Verify OTP - step 2 for 2FA (and legacy OTP-only)
 router.post('/verify-otp', rateLimitAuth, authController.verifyOtp);
 
+// Forgot password - send reset link via email (rate limited per email)
+router.post('/forgot-password', rateLimitAuth, rateLimitOtp, authController.forgotPassword);
+
+// Reset password - consume one-time token to set new password
+router.post('/reset-password', rateLimitAuth, authController.resetPassword);
+
+// Change password - requires authentication
+router.post('/change-password', rateLimitAuth, authenticate, authController.changePassword);
+
 // Logout - Requires authentication + rate limited
 router.post('/logout', rateLimitApi, authenticate, authController.logout);
 

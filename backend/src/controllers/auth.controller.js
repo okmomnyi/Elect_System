@@ -5,7 +5,7 @@ const jwtService = require('../services/jwt.service');
 const otpService = require('../services/otp.service');
 const auditService = require('../services/audit.service');
 const emailService = require('../services/email.service');
-const { hashPassword, verifyPassword } = require('../utils/password');
+const { hashPassword, verifyPassword, generateResetToken, hashResetToken } = require('../utils/password');
 const env = require('../config/env');
 const { asyncHandler, AppError } = require('../middleware/errorHandler');
 const { getClientIp } = require('../utils/getClientIp');
@@ -32,6 +32,22 @@ const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(1, 'Password is required'),
 });
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email address'),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(32).max(128),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+
+const RESET_TOKEN_TTL_MINUTES = 30;
 
 /**
  * Request OTP - POST /api/auth/request-otp
@@ -298,6 +314,197 @@ const verifyOtp = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Forgot Password - POST /api/auth/forgot-password
+ * Always returns the same generic response so attackers can't enumerate emails.
+ */
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = forgotPasswordSchema.parse(req.body);
+
+  const GENERIC_RESPONSE = {
+    success: true,
+    message: 'If an account exists for that email, a reset link has been sent.',
+  };
+
+  if (!email.endsWith(env.ALLOWED_EMAIL_DOMAIN)) {
+    return res.json(GENERIC_RESPONSE);
+  }
+
+  const userResult = await query(
+    'SELECT id, full_name, password_hash, is_active FROM users WHERE email = $1',
+    [email]
+  );
+
+  // Silent no-op if user doesn't exist, has no password set, or is deactivated.
+  if (
+    userResult.rows.length === 0 ||
+    !userResult.rows[0].password_hash ||
+    !userResult.rows[0].is_active
+  ) {
+    return res.json(GENERIC_RESPONSE);
+  }
+
+  const user = userResult.rows[0];
+
+  // Invalidate any prior unused tokens for this user (one outstanding token at a time).
+  await query(
+    `UPDATE password_reset_tokens
+        SET used_at = NOW()
+      WHERE user_id = $1 AND used_at IS NULL`,
+    [user.id]
+  );
+
+  const rawToken  = generateResetToken();
+  const tokenHash = hashResetToken(rawToken);
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
+
+  await query(
+    `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [user.id, tokenHash, expiresAt, getClientIp(req), req.headers['user-agent'] || null]
+  );
+
+  const resetUrl = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
+
+  if (env.NODE_ENV === 'development') {
+    console.log(`\n🔑 [DEV RESET LINK] ${email} → ${resetUrl}\n`);
+  }
+
+  const sent = await emailService.sendPasswordResetEmail(email, resetUrl, user.full_name);
+  if (!sent && env.NODE_ENV !== 'development') {
+    throw new AppError('Failed to send reset email. Please try again in a moment.', 503, 'EMAIL_UNAVAILABLE');
+  }
+
+  await auditService.logFromRequest(req, auditService.ACTIONS.PASSWORD_RESET_REQUESTED, {
+    userId: user.id,
+    metadata: { email },
+  });
+
+  res.json(GENERIC_RESPONSE);
+});
+
+/**
+ * Reset Password - POST /api/auth/reset-password
+ * Consumes a one-time token and sets a new password.
+ */
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = resetPasswordSchema.parse(req.body);
+
+  const tokenHash = hashResetToken(token);
+
+  const result = await query(
+    `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.email, u.is_active
+       FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+      WHERE prt.token_hash = $1`,
+    [tokenHash]
+  );
+
+  if (result.rows.length === 0) {
+    throw new AppError('Invalid or expired reset link.', 400, 'RESET_TOKEN_INVALID');
+  }
+
+  const row = result.rows[0];
+
+  if (row.used_at) {
+    throw new AppError('This reset link has already been used.', 400, 'RESET_TOKEN_USED');
+  }
+
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    throw new AppError('This reset link has expired. Please request a new one.', 400, 'RESET_TOKEN_EXPIRED');
+  }
+
+  if (!row.is_active) {
+    throw new AppError('Account is not active.', 403, 'ACCOUNT_INACTIVE');
+  }
+
+  const newHash = await hashPassword(password);
+
+  // Atomically: update password, mark token used, invalidate other outstanding tokens, drop sessions.
+  await query('BEGIN');
+  try {
+    await query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [newHash, row.user_id]
+    );
+    await query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
+      [row.id]
+    );
+    await query(
+      `UPDATE password_reset_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1 AND used_at IS NULL AND id <> $2`,
+      [row.user_id, row.id]
+    );
+    await query('COMMIT');
+  } catch (err) {
+    await query('ROLLBACK');
+    throw err;
+  }
+
+  // Force re-auth everywhere by dropping the session.
+  await redis.del(KEYS.session(row.user_id));
+
+  await auditService.logFromRequest(req, auditService.ACTIONS.PASSWORD_RESET_COMPLETED, {
+    userId: row.user_id,
+    metadata: { email: row.email },
+  });
+
+  res.json({
+    success: true,
+    message: 'Password updated. You can now sign in with your new password.',
+  });
+});
+
+/**
+ * Change Password - POST /api/auth/change-password (authenticated)
+ * Requires current password.
+ */
+const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+
+  if (currentPassword === newPassword) {
+    throw new AppError('New password must be different from current password.', 400, 'PASSWORD_UNCHANGED');
+  }
+
+  const userResult = await query(
+    'SELECT id, email, password_hash FROM users WHERE id = $1',
+    [req.user.id]
+  );
+
+  if (userResult.rows.length === 0 || !userResult.rows[0].password_hash) {
+    throw new AppError('Account not eligible for password change.', 400, 'NO_PASSWORD_SET');
+  }
+
+  const user = userResult.rows[0];
+
+  const valid = await verifyPassword(user.password_hash, currentPassword);
+  if (!valid) {
+    throw new AppError('Current password is incorrect.', 401, 'INVALID_CREDENTIALS');
+  }
+
+  const newHash = await hashPassword(newPassword);
+
+  await query(
+    `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+    [newHash, user.id]
+  );
+
+  // Invalidate any pending reset tokens — they're moot now.
+  await query(
+    `UPDATE password_reset_tokens SET used_at = NOW()
+      WHERE user_id = $1 AND used_at IS NULL`,
+    [user.id]
+  );
+
+  await auditService.logFromRequest(req, auditService.ACTIONS.PASSWORD_CHANGED, {
+    metadata: { email: user.email },
+  });
+
+  res.json({ success: true, message: 'Password updated successfully.' });
+});
+
+/**
  * Logout - POST /api/auth/logout
  */
 const logout = asyncHandler(async (req, res) => {
@@ -345,6 +552,9 @@ module.exports = {
   register,
   login,
   verifyOtp,
+  forgotPassword,
+  resetPassword,
+  changePassword,
   logout,
   getCurrentUser,
 };

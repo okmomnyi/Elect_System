@@ -14,6 +14,9 @@ const ACTIONS = {
   OTP_REQUESTED: 'otp_requested',
   LOGIN: 'login',
   LOGOUT: 'logout',
+  PASSWORD_RESET_REQUESTED: 'password_reset_requested',
+  PASSWORD_RESET_COMPLETED: 'password_reset_completed',
+  PASSWORD_CHANGED: 'password_changed',
   
   // Voting
   VOTE_SUBMITTED: 'vote_submitted',

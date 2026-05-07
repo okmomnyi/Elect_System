@@ -221,6 +221,37 @@ function electionClosedTemplate(name, electionTitle, results, totalVotes) {
 </html>`;
 }
 
+function passwordResetTemplate(name, resetUrl) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+        <tr><td style="background:#1e40af;padding:32px 40px;">
+          <h1 style="margin:0;color:#fff;font-size:22px;">🔑 Reset your password</h1>
+        </td></tr>
+        <tr><td style="padding:40px;">
+          <p style="margin:0 0 8px;color:#374151;font-size:16px;">Hi ${escapeHtml(name)},</p>
+          <p style="margin:0 0 24px;color:#6b7280;font-size:15px;">We received a request to reset the password on your University Voting System account. Click the button below to choose a new password. This link expires in <strong>30 minutes</strong>.</p>
+          <div style="text-align:center;margin:0 0 32px;">
+            <a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#1e40af;color:#fff;text-decoration:none;padding:14px 36px;border-radius:8px;font-weight:bold;font-size:15px;">Reset password</a>
+          </div>
+          <p style="margin:0 0 8px;color:#6b7280;font-size:13px;">Or copy this link into your browser:</p>
+          <p style="margin:0 0 24px;color:#1e40af;font-size:12px;word-break:break-all;font-family:monospace;">${escapeHtml(resetUrl)}</p>
+          <p style="margin:0;color:#9ca3af;font-size:13px;">If you did not request this, you can safely ignore this email — your password will not change.</p>
+        </td></tr>
+        <tr><td style="background:#f9fafb;padding:20px 40px;text-align:center;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">© ${new Date().getFullYear()} University Voting System. This is an automated message — do not reply.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 function suspiciousActivityTemplate(details) {
   const severityColor = details.severity === 'high' ? '#dc2626'
     : details.severity === 'medium' ? '#d97706' : '#6b7280';
@@ -290,6 +321,27 @@ async function sendOtpEmail(email, otp, fullName = null) {
     return true;
   } catch (err) {
     console.error('❌ Failed to send OTP email:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Send password reset email.
+ * Called DIRECTLY from auth.controller — NOT queued (user is actively waiting).
+ * Returns false on failure so the controller can surface the error.
+ */
+async function sendPasswordResetEmail(email, resetUrl, fullName = null) {
+  try {
+    await postToBrevo({
+      to         : email,
+      toName     : fullName || 'Student',
+      subject    : 'Reset your password — University Voting System',
+      htmlContent: passwordResetTemplate(fullName || 'Student', resetUrl),
+    });
+    console.log(`📧 Password reset email sent to ${email}`);
+    return true;
+  } catch (err) {
+    console.error('❌ Failed to send password reset email:', err.message);
     return false;
   }
 }
@@ -400,6 +452,7 @@ async function healthCheck() {
 
 module.exports = {
   sendOtpEmail,
+  sendPasswordResetEmail,
   sendVoteConfirmation,
   sendElectionOpenedNotification,
   sendElectionClosedNotification,

@@ -1,4 +1,4 @@
-const { scrypt, randomBytes, timingSafeEqual } = require('crypto');
+const { scrypt, randomBytes, timingSafeEqual, createHash } = require('crypto');
 const { promisify } = require('util');
 
 const scryptAsync = promisify(scrypt);
@@ -16,4 +16,19 @@ async function verifyPassword(stored, supplied) {
   return timingSafeEqual(hashedBuf, suppliedBuf);
 }
 
-module.exports = { hashPassword, verifyPassword };
+// 32 bytes = 64 hex chars. URL-safe and unguessable.
+function generateResetToken() {
+  return randomBytes(32).toString('hex');
+}
+
+// sha256 hex digest. Raw token never touches the DB.
+function hashResetToken(rawToken) {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
+
+module.exports = {
+  hashPassword,
+  verifyPassword,
+  generateResetToken,
+  hashResetToken,
+};
