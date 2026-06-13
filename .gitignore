@@ -11,9 +11,6 @@
 # Keep only .env.example (the safe template)
 !.env.example
 
-# ── n8n (removed — kept for reference only) ──────────────────────────────────
-n8n/workflows/email_service.json
-
 # ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
 **/node_modules/

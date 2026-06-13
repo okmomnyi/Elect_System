@@ -95,9 +95,30 @@ async function cleanupVerificationLog() {
   }
 }
 
+/**
+ * Delete password_reset_tokens that are spent or long expired, so the table
+ * does not grow unbounded. Keeps recently-expired rows for a short audit window.
+ */
+async function cleanupResetTokens() {
+  try {
+    const result = await query(
+      `DELETE FROM password_reset_tokens
+       WHERE used_at IS NOT NULL
+          OR expires_at < NOW() - ($1 * INTERVAL '1 day')`,
+      [RETENTION_DAYS]
+    );
+    if (result.rowCount > 0) {
+      console.log(`🧹 [Cleanup] Removed ${result.rowCount} spent/expired password reset token(s)`);
+    }
+  } catch (err) {
+    console.error('❌ [Cleanup] password_reset_tokens cleanup failed:', err.message);
+  }
+}
+
 async function runAllTasks() {
   await autoCloseExpiredElections();
   await cleanupVerificationLog();
+  await cleanupResetTokens();
 }
 
 function start() {
@@ -107,4 +128,4 @@ function start() {
   }, STARTUP_DELAY_MS);
 }
 
-module.exports = { start, runAllTasks, autoCloseExpiredElections, cleanupVerificationLog };
+module.exports = { start, runAllTasks, autoCloseExpiredElections, cleanupVerificationLog, cleanupResetTokens };

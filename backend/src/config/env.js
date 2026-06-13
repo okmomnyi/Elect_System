@@ -26,9 +26,20 @@ const envSchema = z.object({
   VOTE_RETRY_QUEUE: z.string().default('votes.retry'),
   VOTE_DEAD_QUEUE: z.string().default('votes.dead'),
 
-  // JWT (RS256 asymmetric key pair)
-  JWT_PRIVATE_KEY: z.string().min(100),
-  JWT_PUBLIC_KEY: z.string().min(100),
+  // JWT (RS256 asymmetric key pair).
+  // Normalize \n-escaped keys (common when a PEM is stored on a single env line)
+  // and require real PEM markers so a long-but-placeholder value can't pass
+  // validation only to fail at RS256 sign time.
+  JWT_PRIVATE_KEY: z.string().min(100)
+    .transform((s) => s.replace(/\\n/g, '\n'))
+    .refine((s) => s.includes('-----BEGIN') && s.includes('PRIVATE KEY'), {
+      message: 'must be a PEM private key (-----BEGIN ... PRIVATE KEY-----), not a placeholder',
+    }),
+  JWT_PUBLIC_KEY: z.string().min(100)
+    .transform((s) => s.replace(/\\n/g, '\n'))
+    .refine((s) => s.includes('-----BEGIN') && s.includes('PUBLIC KEY'), {
+      message: 'must be a PEM public key (-----BEGIN PUBLIC KEY-----), not a placeholder',
+    }),
   JWT_EXPIRY: z.string().transform(Number).pipe(z.number().int().positive()).default('86400'),
 
   // Brevo transactional email

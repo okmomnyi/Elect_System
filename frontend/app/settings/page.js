@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRequireAuth, useAuth } from '@/hooks/useAuth';
+import { auth as authApi } from '@/lib/api';
 
 function Section({ title, description, children }) {
   return (
@@ -25,6 +26,119 @@ function SettingsRow({ label, description, children }) {
       </div>
       <div className="sm:flex-shrink-0">{children}</div>
     </div>
+  );
+}
+
+function ChangePasswordForm() {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword]         = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw, setShowPw]                   = useState(false);
+  const [loading, setLoading]                 = useState(false);
+  const [error, setError]                     = useState('');
+  const [success, setSuccess]                 = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError('');
+    setSuccess(false);
+
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('New passwords do not match.');
+      return;
+    }
+    if (currentPassword === newPassword) {
+      setError('New password must be different from your current password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      setSuccess(true);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setSuccess(false), 4000);
+    } catch (err) {
+      setError(err.message || 'Could not update password.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const inputCls =
+    'w-full px-4 py-2.5 bg-surface-container border border-outline-variant rounded-xl text-sm text-on-surface placeholder:text-outline focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all';
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3 max-w-md">
+      <div>
+        <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Current password</label>
+        <input
+          type={showPw ? 'text' : 'password'}
+          autoComplete="current-password"
+          required
+          value={currentPassword}
+          onChange={e => { setCurrentPassword(e.target.value); setError(''); }}
+          className={inputCls}
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-bold text-on-surface-variant mb-1.5">New password</label>
+        <input
+          type={showPw ? 'text' : 'password'}
+          autoComplete="new-password"
+          required
+          minLength={8}
+          value={newPassword}
+          onChange={e => { setNewPassword(e.target.value); setError(''); }}
+          className={inputCls}
+          placeholder="At least 8 characters"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-bold text-on-surface-variant mb-1.5">Confirm new password</label>
+        <input
+          type={showPw ? 'text' : 'password'}
+          autoComplete="new-password"
+          required
+          minLength={8}
+          value={confirmPassword}
+          onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+          className={inputCls}
+        />
+      </div>
+      <label className="flex items-center gap-2 text-xs text-on-surface-variant cursor-pointer">
+        <input type="checkbox" checked={showPw} onChange={() => setShowPw(v => !v)} className="rounded" />
+        Show passwords
+      </label>
+
+      {error && (
+        <p className="text-sm text-error flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-base">error</span>
+          {error}
+        </p>
+      )}
+      {success && (
+        <p className="text-sm text-emerald-700 flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+          Password updated successfully.
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={loading || !currentPassword || !newPassword || !confirmPassword}
+        className="px-5 py-2.5 btn-gradient text-on-primary rounded-xl font-bold text-sm shadow-md hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity flex items-center gap-2"
+      >
+        <span className="material-symbols-outlined text-base">key</span>
+        {loading ? 'Updating…' : 'Update password'}
+      </button>
+    </form>
   );
 }
 
@@ -63,7 +177,21 @@ export default function SettingsPage() {
     analyticsOptIn:  true,
   });
 
+  // Load saved preferences for this device on mount.
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('voting:prefs') || '{}');
+      if (stored.notifications) setNotifications(n => ({ ...n, ...stored.notifications }));
+      if (stored.privacy) setPrivacy(p => ({ ...p, ...stored.privacy }));
+    } catch { /* ignore malformed/unavailable storage */ }
+  }, []);
+
+  // Persist preferences so "Saved" reflects real, durable state (there is no
+  // server-side preferences store yet — these are kept per-device).
   function handleSave() {
+    try {
+      localStorage.setItem('voting:prefs', JSON.stringify({ notifications, privacy }));
+    } catch { /* storage unavailable (private mode) — fall through to toast */ }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -178,12 +306,17 @@ export default function SettingsPage() {
 
         {/* Security Section */}
         <Section title="Security" description="Authentication and session management.">
-          <SettingsRow label="Authentication Method" description="You log in via One-Time Password sent to your email">
+          <SettingsRow label="Authentication Method" description="Password + 6-digit OTP sent to your email on every sign-in">
             <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-xl">
               <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
-              <span className="text-sm font-bold">OTP — Active</span>
+              <span className="text-sm font-bold">Password + OTP</span>
             </div>
           </SettingsRow>
+          <div className="pt-4 border-t border-surface-container">
+            <p className="font-bold text-sm text-on-surface mb-1">Change Password</p>
+            <p className="text-xs text-on-surface-variant mb-4">Use a strong password you don&apos;t use on other sites.</p>
+            <ChangePasswordForm />
+          </div>
           <SettingsRow label="Current Session" description="Sign out from this device">
             <button
               onClick={handleLogout}

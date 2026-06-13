@@ -7,18 +7,22 @@ import CandidateCard from './CandidateCard';
 export default function LiveTally({ electionId, initialResults = [] }) {
   const [results, setResults] = useState(initialResults);
   const { connected } = useElectionSocket(electionId, {
-    onTallyUpdate: (data) => {
-      if (data.results) {
-        setResults([...data.results].sort((a, b) => b.voteCount - a.voteCount));
-      }
+    // current_tally carries authoritative counts but no names — merge by id,
+    // keeping candidate names/positions from the initial REST payload.
+    onTally: (rows) => {
+      const byId = Object.fromEntries(rows.map(r => [r.candidateId, r.votes]));
+      setResults(prev =>
+        [...prev]
+          .map(c => (byId[c.id] != null ? { ...c, voteCount: byId[c.id] } : c))
+          .sort((a, b) => b.voteCount - a.voteCount)
+      );
     },
-    onVoteUpdate: (data) => {
-      setResults(prev => {
-        const next = prev.map(c =>
-          c.id === data.candidateId ? { ...c, voteCount: data.newCount } : c
-        );
-        return [...next].sort((a, b) => b.voteCount - a.voteCount);
-      });
+    onVote: ({ candidateId, votes }) => {
+      setResults(prev =>
+        [...prev]
+          .map(c => (c.id === candidateId ? { ...c, voteCount: votes } : c))
+          .sort((a, b) => b.voteCount - a.voteCount)
+      );
     },
   });
 

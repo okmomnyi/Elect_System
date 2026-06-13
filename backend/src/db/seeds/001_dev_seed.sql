@@ -129,18 +129,21 @@ ON CONFLICT (id) DO NOTHING;
 -- AUDIT LOG SAMPLES
 -- ======================
 
-INSERT INTO audit_log (user_id, action, entity_type, entity_id, metadata, ip_address)
+-- Explicit ids + ON CONFLICT so the seed stays idempotent ("safe to re-run").
+-- Without fixed ids these rows would be appended on every `npm run seed`.
+INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, metadata, ip_address)
 VALUES
-  ('00000000-0000-0000-0000-000000000002', 'election_created', 'election', '10000000-0000-0000-0000-000000000001',
+  ('a0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'election_created', 'election', '10000000-0000-0000-0000-000000000001',
    '{"title": "Student Council President 2024"}', '10.0.0.50'),
-  ('00000000-0000-0000-0000-000000000002', 'election_created', 'election', '10000000-0000-0000-0000-000000000002',
+  ('a0000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', 'election_created', 'election', '10000000-0000-0000-0000-000000000002',
    '{"title": "Best Professor Award 2024"}', '10.0.0.50'),
-  ('00000000-0000-0000-0000-000000000002', 'election_opened',  'election', '10000000-0000-0000-0000-000000000002',
+  ('a0000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002', 'election_opened',  'election', '10000000-0000-0000-0000-000000000002',
    '{"title": "Best Professor Award 2024"}', '10.0.0.50'),
-  ('00000000-0000-0000-0000-000000000101', 'login',            NULL,       NULL,
+  ('a0000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000101', 'login',            NULL,       NULL,
    '{"method": "otp"}', '10.0.0.101'),
-  ('00000000-0000-0000-0000-000000000101', 'vote_submitted',   'election', '10000000-0000-0000-0000-000000000003',
-   '{"election": "Homecoming King & Queen 2023"}', '10.0.0.101');
+  ('a0000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000101', 'vote_submitted',   'election', '10000000-0000-0000-0000-000000000003',
+   '{"election": "Homecoming King & Queen 2023"}', '10.0.0.101')
+ON CONFLICT (id) DO NOTHING;
 
 DO $$
 BEGIN

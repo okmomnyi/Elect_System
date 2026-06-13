@@ -57,16 +57,22 @@ app.use(helmet({
       frameSrc: ["'none'"],
     },
   },
-  hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
-  },
+  // Only advertise HSTS in production, where TLS is terminated at nginx.
+  // Sending a 1-year preload HSTS header over plaintext HTTP (e.g. local/dev on
+  // http://localhost) is a footgun: if a host is ever briefly served over HTTPS
+  // and then reverts to HTTP, browsers lock users out for the max-age window.
+  hsts: env.NODE_ENV === 'production'
+    ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+    : false,
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
-// CORS configuration
-const ALLOWED_ORIGINS = new Set([env.FRONTEND_URL].filter(Boolean));
+// CORS configuration.
+// Browsers send the Origin header WITHOUT a trailing slash, so we normalize the
+// configured FRONTEND_URL the same way — otherwise a value like "https://app.edu/"
+// would reject every browser request with 403 and take down all auth.
+const normalizeOrigin = (o) => (typeof o === 'string' ? o.replace(/\/+$/, '') : o);
+const ALLOWED_ORIGINS = new Set([normalizeOrigin(env.FRONTEND_URL)].filter(Boolean));
 
 // Reject browser requests from unauthorized origins before cors runs.
 // Requests with no Origin header (Vercel SSR / server-to-server) pass through.

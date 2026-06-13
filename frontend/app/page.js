@@ -94,10 +94,10 @@ export default function LandingPage() {
             </div>
             <div className="mt-16 flex flex-wrap gap-10">
               {[
-                { label: 'Secure Encryption',  value: 'RS256' },
+                { label: 'Signed Sessions',     value: 'RS256' },
                 { label: 'Vote Anonymity',      value: '100%'  },
-                { label: 'Uptime SLA',          value: '99.9%' },
-                { label: 'Supported Faculties', value: '12+'   },
+                { label: 'One Vote / Election', value: 'Enforced' },
+                { label: 'Real-time Tally',     value: 'Live'  },
               ].map(({ label, value }) => (
                 <div key={label}>
                   <p className="font-headline font-extrabold text-3xl text-secondary-container">{value}</p>

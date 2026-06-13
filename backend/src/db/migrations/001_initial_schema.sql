@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- ======================
 -- USERS TABLE
 -- ======================
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id      VARCHAR(20)   UNIQUE,
   email           VARCHAR(255)  UNIQUE NOT NULL,
@@ -27,7 +27,7 @@ COMMENT ON COLUMN users.role IS 'Access level: student (vote only), admin (manag
 -- ======================
 -- ELECTIONS TABLE
 -- ======================
-CREATE TABLE elections (
+CREATE TABLE IF NOT EXISTS elections (
   id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   title           VARCHAR(255)  NOT NULL,
   description     TEXT,
@@ -48,7 +48,7 @@ COMMENT ON COLUMN elections.results_visible IS 'Whether results are visible to s
 -- ======================
 -- CANDIDATES TABLE
 -- ======================
-CREATE TABLE candidates (
+CREATE TABLE IF NOT EXISTS candidates (
   id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   election_id   UUID          NOT NULL REFERENCES elections(id) ON DELETE RESTRICT,
   name          VARCHAR(255)  NOT NULL,
@@ -67,7 +67,7 @@ COMMENT ON COLUMN candidates.is_active IS 'Whether candidate is still in the rac
 -- ======================
 -- VOTE RECEIPTS TABLE (Identity Side)
 -- ======================
-CREATE TABLE vote_receipts (
+CREATE TABLE IF NOT EXISTS vote_receipts (
   id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id        UUID          NOT NULL REFERENCES users(id),
   election_id    UUID          NOT NULL REFERENCES elections(id),
@@ -84,7 +84,7 @@ COMMENT ON COLUMN vote_receipts.receipt_token IS 'Cryptographic token linking re
 -- ======================
 -- BALLOTS TABLE (Choice Side)
 -- ======================
-CREATE TABLE ballots (
+CREATE TABLE IF NOT EXISTS ballots (
   id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   election_id   UUID          NOT NULL REFERENCES elections(id),
   candidate_id  UUID          NOT NULL REFERENCES candidates(id),
@@ -98,7 +98,7 @@ COMMENT ON COLUMN ballots.receipt_token IS 'Links to vote_receipts for verificat
 -- ======================
 -- AUDIT LOG TABLE (Append-Only)
 -- ======================
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
   id          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID          REFERENCES users(id),
   action      VARCHAR(100)  NOT NULL,
@@ -116,7 +116,7 @@ COMMENT ON COLUMN audit_log.action IS 'Examples: otp_requested, login, vote_subm
 -- ======================
 -- VERIFICATION LOG TABLE
 -- ======================
-CREATE TABLE verification_log (
+CREATE TABLE IF NOT EXISTS verification_log (
   id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID         REFERENCES users(id),
   email        VARCHAR(255) NOT NULL,
@@ -133,36 +133,38 @@ COMMENT ON TABLE verification_log IS 'Tracks OTP verification attempts and outco
 -- ======================
 
 -- vote_receipts indexes
-CREATE UNIQUE INDEX idx_vote_receipts_user_election ON vote_receipts(user_id, election_id);
-CREATE INDEX idx_vote_receipts_election ON vote_receipts(election_id);
-CREATE INDEX idx_vote_receipts_token ON vote_receipts(receipt_token);
+-- NOTE: the UNIQUE (user_id, election_id) table constraint already creates an
+-- implicit unique index, so a separate idx_vote_receipts_user_election would be
+-- redundant on this hot write path and is intentionally omitted.
+CREATE INDEX IF NOT EXISTS idx_vote_receipts_election ON vote_receipts(election_id);
+CREATE INDEX IF NOT EXISTS idx_vote_receipts_token ON vote_receipts(receipt_token);
 
 -- ballots indexes
-CREATE INDEX idx_ballots_election ON ballots(election_id);
-CREATE INDEX idx_ballots_candidate ON ballots(candidate_id);
-CREATE INDEX idx_ballots_token ON ballots(receipt_token);
+CREATE INDEX IF NOT EXISTS idx_ballots_election ON ballots(election_id);
+CREATE INDEX IF NOT EXISTS idx_ballots_candidate ON ballots(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_ballots_token ON ballots(receipt_token);
 
 -- candidates indexes
-CREATE INDEX idx_candidates_election ON candidates(election_id);
-CREATE INDEX idx_candidates_active ON candidates(election_id, is_active) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_candidates_election ON candidates(election_id);
+CREATE INDEX IF NOT EXISTS idx_candidates_active ON candidates(election_id, is_active) WHERE is_active = TRUE;
 
 -- elections indexes
-CREATE INDEX idx_elections_status ON elections(status);
-CREATE INDEX idx_elections_created_by ON elections(created_by);
+CREATE INDEX IF NOT EXISTS idx_elections_status ON elections(status);
+CREATE INDEX IF NOT EXISTS idx_elections_created_by ON elections(created_by);
 
 -- audit log indexes
-CREATE INDEX idx_audit_user ON audit_log(user_id);
-CREATE INDEX idx_audit_action ON audit_log(action);
-CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
-CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -- verification log indexes
-CREATE INDEX idx_verification_email ON verification_log(email);
-CREATE INDEX idx_verification_requested ON verification_log(requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_verification_email ON verification_log(email);
+CREATE INDEX IF NOT EXISTS idx_verification_requested ON verification_log(requested_at DESC);
 
 -- users indexes
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 -- ======================
 -- SECURITY: Revoke destructive permissions on audit_log
@@ -184,9 +186,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_elections_updated_at ON elections;
 CREATE TRIGGER update_elections_updated_at BEFORE UPDATE ON elections
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { auth } from '@/lib/api';
 
 const navLinks = [
   { href: '/dashboard',  label: 'Elections', icon: 'ballot'    },
@@ -19,12 +18,11 @@ const bottomLinks = [
 export default function StudentSidebar() {
   const pathname = usePathname();
   const router   = useRouter();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   async function handleLogout() {
-    try {
-      await auth.logout();
-    } catch (_) { /* ignore */ }
+    // Context logout clears cached user state in addition to the server cookie.
+    await logout();
     router.push('/login');
   }
 

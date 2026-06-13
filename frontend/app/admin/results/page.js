@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRequireAdmin } from '@/hooks/useAuth';
-import { admin, elections as electionsApi } from '@/lib/api';
+import { admin } from '@/lib/api';
 
 function Spinner() {
   return (
@@ -24,10 +24,10 @@ function ElectionResultPanel({ election }) {
   async function loadResults() {
     setLoading(true);
     try {
-      const data = await electionsApi.results(election.id);
+      const data = await admin.elections.results(election.id);
       setResults(data);
     } catch {
-      setResults({ candidates: [] });
+      setResults({ results: [] });
     } finally {
       setLoading(false);
     }
@@ -38,7 +38,9 @@ function ElectionResultPanel({ election }) {
     if (!results && !loading) loadResults();
   }
 
-  const candidates = results?.candidates?.sort((a, b) => b.vote_count - a.vote_count) || [];
+  const candidates = results?.results
+    ? [...results.results].map(c => ({ ...c, vote_count: parseInt(c.vote_count || 0, 10) })).sort((a, b) => b.vote_count - a.vote_count)
+    : [];
   const totalVotes = candidates.reduce((s, c) => s + (c.vote_count || 0), 0);
   const winner     = candidates[0];
   const winnerPct  = totalVotes > 0 && winner ? Math.round((winner.vote_count / totalVotes) * 100) : 0;
@@ -283,10 +285,10 @@ export default function AdminResultsPage() {
           <div className="col-span-12 lg:col-span-4 bg-secondary-container rounded-2xl p-8 relative overflow-hidden">
             <div className="relative z-10">
               <h4 className="font-headline font-bold text-lg text-on-secondary-container mb-2">Integrity Status</h4>
-              <p className="text-sm text-on-secondary-container/80 mb-4">All cryptographic seals are active and verified.</p>
+              <p className="text-sm text-on-secondary-container/80 mb-4">Ballots are stored separately from voter identity in an append-only audit log.</p>
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-on-secondary-container" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
-                <span className="font-bold text-on-secondary-container text-sm">Blockchain Secured</span>
+                <span className="font-bold text-on-secondary-container text-sm">Integrity Verified</span>
               </div>
             </div>
             <span className="material-symbols-outlined absolute -right-4 -bottom-4 text-on-secondary-container/10" style={{ fontSize: '120px' }}>security</span>

@@ -3,6 +3,7 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const jwt = require('jsonwebtoken');
 const env = require('./config/env');
 const { redis, redisSub, redisPub, KEYS, CHANNELS } = require('./config/redis');
+const { query } = require('./config/database');
 const { uuidSchema } = require('./utils/validators');
 
 /**
@@ -14,7 +15,9 @@ function setupSocket(httpServer) {
   // Create Socket.io server
   const io = new Server(httpServer, {
     cors: {
-      origin: env.FRONTEND_URL,
+      // Normalize trailing slash so a configured "https://app.edu/" still matches
+      // the browser-sent Origin "https://app.edu".
+      origin: typeof env.FRONTEND_URL === 'string' ? env.FRONTEND_URL.replace(/\/+$/, '') : env.FRONTEND_URL,
       credentials: true,
     },
     transports: ['websocket', 'polling'],
@@ -85,10 +88,50 @@ function setupSocket(httpServer) {
         return;
       }
 
+      // Authentication required — the live tally must not leak to anonymous
+      // clients. (The same gating exists on the REST results endpoint.)
+      if (!socket.user) {
+        socket.emit('error', { code: 'UNAUTHENTICATED', message: 'Authentication required' });
+        return;
+      }
+
+      // Eligibility check: results are only viewable when the election is closed,
+      // results have been made visible, or this user has already voted. Otherwise
+      // the running tally stays hidden during active voting.
+      try {
+        const electionRes = await query(
+          'SELECT status, results_visible FROM elections WHERE id = $1',
+          [electionId]
+        );
+        if (electionRes.rows.length === 0) {
+          socket.emit('error', { code: 'NOT_FOUND', message: 'Election not found' });
+          return;
+        }
+        const { status, results_visible } = electionRes.rows[0];
+
+        let allowed = status === 'closed' || results_visible === true;
+        if (!allowed) {
+          const votedRes = await query(
+            'SELECT 1 FROM vote_receipts WHERE user_id = $1 AND election_id = $2',
+            [socket.user.id, electionId]
+          );
+          allowed = votedRes.rows.length > 0;
+        }
+
+        if (!allowed) {
+          socket.emit('error', { code: 'RESULTS_NOT_AVAILABLE', message: 'Results are not yet available' });
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking election access:', error.message);
+        socket.emit('error', { message: 'Unable to join election' });
+        return;
+      }
+
       // Join the election room
       socket.join(`election:${electionId}`);
       console.log(`🔌 Socket ${socket.id} joined election:${electionId}`);
-      
+
       // Send current tally to the new joiner
       try {
         const currentTally = await getCurrentTally(electionId);

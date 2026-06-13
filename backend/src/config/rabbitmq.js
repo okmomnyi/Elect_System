@@ -177,8 +177,21 @@ async function consumeVotes(handler) {
     const primaryDeath = xDeath.find((d) => d.queue === QUEUES.PRIMARY);
     const retryCount = primaryDeath?.count || 0;
 
+    // A message whose body can't even be parsed will never succeed — retrying it
+    // 3 times is pointless and is a poison-loop vector. Dead-letter it at once.
+    let content;
     try {
-      const content = JSON.parse(msg.content.toString());
+      content = JSON.parse(msg.content.toString());
+    } catch (parseErr) {
+      console.error('❌ RabbitMQ: Unparseable message, dead-lettering immediately:', parseErr.message);
+      try {
+        await sendToDeadLetter({ raw: msg.content.toString().slice(0, 1000) }, `unparseable: ${parseErr.message}`);
+      } catch (_) { /* still ack to drop the poison message */ }
+      ch.ack(msg);
+      return;
+    }
+
+    try {
       await handler(content, ch, msg, retryCount);
     } catch (error) {
       console.error('❌ RabbitMQ: Consumer error', error.message);
@@ -186,9 +199,8 @@ async function consumeVotes(handler) {
       if (retryCount >= 3) {
         console.log(`🐰 RabbitMQ: Message exceeded max retries, sending to dead letter`);
         try {
-          const content = JSON.parse(msg.content.toString());
           await sendToDeadLetter(content, error.message);
-        } catch (_) { /* ignore parse error — still ack to avoid infinite loop */ }
+        } catch (_) { /* ignore — still ack to avoid infinite loop */ }
         ch.ack(msg);
       } else {
         // Reject without requeue — dead-letter exchange routes to retry queue

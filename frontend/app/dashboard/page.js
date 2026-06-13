@@ -310,7 +310,7 @@ export default function DashboardPage() {
           { href: '/dashboard',  icon: 'ballot',    label: 'Elections',  active: true  },
           { href: '/results',    icon: 'analytics', label: 'Results',    active: false },
           { href: '/candidates', icon: 'groups',    label: 'Candidates', active: false },
-          { href: '/login',      icon: 'person',    label: 'Profile',    active: false },
+          { href: '/settings',   icon: 'person',    label: 'Profile',    active: false },
         ].map(({ href, icon, label, active }) => (
           <Link
             key={href}

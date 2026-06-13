@@ -51,68 +51,85 @@ async function processVote(message) {
   );
 
   // ─── Database transaction ────────────────────────────────────────────────
-  await withTransaction(async (client) => {
-    // Layer 2: Check for existing receipt (idempotency — covers worker restarts
-    // and duplicate deliveries). If already recorded, throw a known error so
-    // the caller can ACK the message without re-processing.
-    const existingResult = await client.query(
-      'SELECT 1 FROM vote_receipts WHERE user_id = $1 AND election_id = $2',
-      [userId, electionId]
-    );
+  let alreadyRecorded = false;
+  try {
+    await withTransaction(async (client) => {
+      // Layer 2: Check for existing receipt (idempotency — covers worker restarts
+      // and duplicate deliveries). If already recorded, throw a known error so
+      // we fall into the reconcile path below instead of double-inserting.
+      const existingResult = await client.query(
+        'SELECT 1 FROM vote_receipts WHERE user_id = $1 AND election_id = $2',
+        [userId, electionId]
+      );
 
-    if (existingResult.rows.length > 0) {
-      const err = new Error('Vote already recorded — idempotent success');
-      err.code = 'ALREADY_VOTED';
+      if (existingResult.rows.length > 0) {
+        const err = new Error('Vote already recorded — idempotent success');
+        err.code = 'ALREADY_VOTED';
+        throw err;
+      }
+
+      // Insert vote receipt (identity side — WHO voted)
+      await client.query(
+        `INSERT INTO vote_receipts (user_id, election_id, receipt_token, ip_address, user_agent, voted_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, electionId, receiptToken, ipAddress, userAgent, submittedAt]
+      );
+
+      // Insert ballot (choice side — HOW they voted; NO user_id for ballot secrecy)
+      await client.query(
+        `INSERT INTO ballots (election_id, candidate_id, receipt_token, cast_at)
+         VALUES ($1, $2, $3, $4)`,
+        [electionId, candidateId, receiptToken, submittedAt]
+      );
+
+      // Insert audit log entry inside the same transaction for atomicity
+      await client.query(
+        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, metadata)
+         VALUES ($1, 'vote_recorded', 'election', $2, $3, $4)`,
+        [
+          userId,
+          electionId,
+          ipAddress,
+          JSON.stringify({ messageId, candidateId }),
+        ]
+      );
+
+      console.log(`✅ Vote written to DB: receipt=${receiptToken.substring(0, 16)}...`);
+    });
+  } catch (err) {
+    // ALREADY_VOTED (our idempotency check) or 23505 (unique-constraint race):
+    // the ballot is durably in the DB. Don't re-throw — fall through to the
+    // reconcile path so any lost Redis tally update from a prior attempt heals.
+    if (err.code === 'ALREADY_VOTED' || err.code === '23505') {
+      alreadyRecorded = true;
+      console.log(`ℹ️  Vote already recorded (idempotent replay): ${messageId}`);
+    } else {
       throw err;
     }
+  }
 
-    // Insert vote receipt (identity side — WHO voted)
-    await client.query(
-      `INSERT INTO vote_receipts (user_id, election_id, receipt_token, ip_address, user_agent, voted_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [userId, electionId, receiptToken, ipAddress, userAgent, submittedAt]
-    );
-
-    // Insert ballot (choice side — HOW they voted; NO user_id for ballot secrecy)
-    await client.query(
-      `INSERT INTO ballots (election_id, candidate_id, receipt_token, cast_at)
-       VALUES ($1, $2, $3, $4)`,
-      [electionId, candidateId, receiptToken, submittedAt]
-    );
-
-    // Insert audit log entry inside the same transaction for atomicity
-    await client.query(
-      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, metadata)
-       VALUES ($1, 'vote_recorded', 'election', $2, $3, $4)`,
-      [
-        userId,
-        electionId,
-        ipAddress,
-        JSON.stringify({ messageId, candidateId }),
-      ]
-    );
-
-    console.log(`✅ Vote written to DB: receipt=${receiptToken.substring(0, 16)}...`);
-  });
-
-  // ─── Post-commit: mark user as voted in Redis ────────────────────────────
-  // Done here (after DB commit) so the flag is only set once the vote is
-  // durably recorded. If set before the DB write (in vote.service) and the
-  // processor permanently failed, the user would be locked out of voting with
-  // no DB record to show for it.
+  // ─── Post-commit: mark user as voted in Redis (idempotent set) ───────────
+  // Set after the DB write so the flag only exists once the vote is durable.
   await redis.set(KEYS.voted(userId, electionId), '1', 'EX', TTL.VOTED);
 
-  // ─── Post-commit: update Redis tally ────────────────────────────────────
-  const newCount = await tallyService.incrementVote(electionId, candidateId);
-  console.log(`📊 Tally updated: ${candidateName} → ${newCount} votes`);
-
-  // Publish tally update so Socket.io broadcasts to connected clients
-  await tallyService.publishTallyUpdate(electionId, candidateId, candidateName, newCount);
+  if (alreadyRecorded) {
+    // The ballot is in the DB, but this is a replay — a previous attempt may
+    // have committed the row yet failed before (or while) updating the Redis
+    // tally (Redis blip / crash between COMMIT and INCR). Re-derive the tally
+    // for this election from the authoritative `ballots` table so the live
+    // count can never silently undercount. If this reconcile fails (e.g. Redis
+    // still down), we throw so the message is retried again later.
+    await syncTallyFromDb(electionId);
+  } else {
+    // ─── Fresh write: increment Redis tally + broadcast ───────────────────
+    const newCount = await tallyService.incrementVote(electionId, candidateId);
+    console.log(`📊 Tally updated: ${candidateName} → ${newCount} votes`);
+    await tallyService.publishTallyUpdate(electionId, candidateId, candidateName, newCount);
+  }
 
   // ─── Fire-and-forget: enqueue vote confirmation email ──────────────────
-  // The worker (sendEmail.job.js) re-fetches user + election from the DB.
-  // Using jobId for idempotency: if the worker retries this job, it won't
-  // enqueue a second confirmation for the same vote.
+  // Runs on both the fresh and replay paths; the jobId makes it idempotent so
+  // no duplicate confirmation is ever sent for the same vote.
   queues.emailDispatch
     .add(
       'send-vote-confirmation',
@@ -123,7 +140,7 @@ async function processVote(message) {
       console.error('⚠️  Failed to enqueue vote confirmation email (non-fatal):', err.message)
     );
 
-  return { success: true, receiptToken };
+  return { success: true, receiptToken, idempotent: alreadyRecorded };
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRequireAdmin } from '@/hooks/useAuth';
 
@@ -91,7 +91,24 @@ export default function AdminConfigPage() {
     debugMode:       false,
   });
 
+  // Restore previously-saved console preferences for this device.
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('voting:adminConfig') || '{}');
+      if (stored.email) setEmail(s => ({ ...s, ...stored.email }));
+      if (stored.voting) setVoting(s => ({ ...s, ...stored.voting }));
+      if (stored.security) setSecurity(s => ({ ...s, ...stored.security }));
+      if (stored.maintenance) setMaintenance(s => ({ ...s, ...stored.maintenance }));
+    } catch { /* ignore */ }
+  }, []);
+
   function handleSave() {
+    try {
+      localStorage.setItem(
+        'voting:adminConfig',
+        JSON.stringify({ email, voting, security, maintenance })
+      );
+    } catch { /* storage unavailable — still show confirmation */ }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -307,20 +324,23 @@ export default function AdminConfigPage() {
             <div>
               <h4 className="font-headline font-bold text-xl text-on-primary mb-1">Integrity Report</h4>
               <p className="text-primary-fixed-dim text-sm max-w-md">
-                All cryptographic seals active. Audit trail verified. Platform operating normally.
+                Ballots stored separately from voter identity. Audit trail is append-only.
               </p>
             </div>
             <div className="flex items-center gap-6 flex-wrap">
-              <div>
-                <p className="text-3xl font-headline font-bold text-on-primary">99.9%</p>
-                <p className="text-[10px] text-primary-fixed-dim uppercase font-bold tracking-wider">Uptime</p>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary-container" style={{ fontVariationSettings: "'FILL' 1" }}>lock</span>
+                <div>
+                  <p className="font-bold text-on-primary text-sm">RS256</p>
+                  <p className="text-[10px] text-primary-fixed-dim uppercase font-bold tracking-wider">Signed sessions</p>
+                </div>
               </div>
               <div className="w-px h-10 bg-primary-container" />
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary-container" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
                 <div>
-                  <p className="font-bold text-on-primary text-sm">Secured</p>
-                  <p className="text-[10px] text-primary-fixed-dim uppercase font-bold tracking-wider">Blockchain</p>
+                  <p className="font-bold text-on-primary text-sm">Append-only</p>
+                  <p className="text-[10px] text-primary-fixed-dim uppercase font-bold tracking-wider">Audit log</p>
                 </div>
               </div>
             </div>

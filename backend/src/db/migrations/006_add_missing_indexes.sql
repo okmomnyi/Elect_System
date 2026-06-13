@@ -1,5 +1,7 @@
--- Migration 002: Add missing composite indexes for query performance
+-- Migration 006: Add missing composite indexes for query performance
 -- These were identified during the security/performance audit.
+-- (Renamed from a duplicate "002" filename; index-only and order-independent,
+--  so it safely runs after all schema migrations.)
 
 -- Speeds up /api/internal/recipients?role=... and admin user-listing queries
 -- that filter by role AND is_active simultaneously.

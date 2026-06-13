@@ -4,6 +4,7 @@
  * Started by: docker-compose worker service, PM2 ecosystem config
  */
 
+const http = require('http');
 const env = require('./config/env');
 const database = require('./config/database');
 const redisModule = require('./config/redis');
@@ -11,6 +12,36 @@ const rabbitmq = require('./config/rabbitmq');
 const voteProcessor = require('./processors/vote.processor');
 
 console.log('🔧 Starting Vote Worker...\n');
+
+// Liveness/readiness flag flipped once the consumer is attached. A tiny HTTP
+// server exposes it so Docker/orchestrators can detect a dead or stalled worker
+// (previously the worker had NO healthcheck, so a crashed consumer was invisible
+// and votes would silently pile up in the queue).
+let consuming = false;
+const HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || '3002', 10);
+
+const healthServer = http.createServer(async (req, res) => {
+  if (req.url !== '/health') {
+    res.writeHead(404).end();
+    return;
+  }
+  try {
+    const rabbitHealthy = consuming && (await rabbitmq.healthCheck());
+    if (rabbitHealthy) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', consuming }));
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'unhealthy', consuming }));
+    }
+  } catch (err) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'unhealthy', error: err.message }));
+  }
+});
+healthServer.listen(HEALTH_PORT, () => {
+  console.log(`🩺 Worker health endpoint on :${HEALTH_PORT}/health`);
+});
 
 /**
  * Main worker startup function
@@ -37,6 +68,7 @@ async function startWorker() {
 
     // Start consuming votes from the queue
     console.log('\n🎧 Worker listening for votes...\n');
+    consuming = true;
 
     await rabbitmq.consumeVotes(async (message, channel, msg, retryCount) => {
       console.log(`📥 Received vote: ${message.messageId} (retry: ${retryCount})`);

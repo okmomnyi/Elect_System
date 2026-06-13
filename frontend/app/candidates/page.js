@@ -291,7 +291,7 @@ export default function CandidatesPage() {
           { href: '/dashboard',  icon: 'ballot',    label: 'Elections',  active: false },
           { href: '/results',    icon: 'analytics', label: 'Results',    active: false },
           { href: '/candidates', icon: 'groups',    label: 'Candidates', active: true  },
-          { href: '/login',      icon: 'person',    label: 'Profile',    active: false },
+          { href: '/settings',   icon: 'person',    label: 'Profile',    active: false },
         ].map(({ href, icon, label, active }) => (
           <Link
             key={href}

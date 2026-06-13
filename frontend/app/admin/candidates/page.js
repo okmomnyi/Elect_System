@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRequireAdmin } from '@/hooks/useAuth';
-import { admin, elections as electionsApi } from '@/lib/api';
+import { admin } from '@/lib/api';
 
 function Spinner() {
   return (

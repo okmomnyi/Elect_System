@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { query } = require('../config/database');
+const { query, withTransaction } = require('../config/database');
 const { redis, KEYS, TTL } = require('../config/redis');
 const jwtService = require('../services/jwt.service');
 const otpService = require('../services/otp.service');
@@ -237,24 +237,29 @@ const login = asyncHandler(async (req, res) => {
  * Step 2 of 2FA (or final step of register / legacy OTP-only)
  */
 const verifyOtp = asyncHandler(async (req, res) => {
-  const { email, otp, fullName, studentId } = verifyOtpSchema.parse(req.body);
+  // NOTE: fullName / studentId are intentionally NOT taken from the request body
+  // on this path. Profile fields are only ever set from the staged registration
+  // record (reg:<email>). Otherwise any user completing the login/2FA step could
+  // overwrite their own profile — or, via studentId unique collisions, probe
+  // other accounts — through the auth endpoint.
+  const { email, otp } = verifyOtpSchema.parse(req.body);
 
   const verification = await otpService.verifyOtp(email, otp);
   if (!verification.valid) {
     throw new AppError(verification.error, 400, 'OTP_INVALID');
   }
 
-  // Check for pending registration data
+  // Profile fields come exclusively from a pending registration, if one exists.
   const regRaw = await redis.get(`reg:${email}`);
   let passwordHash = null;
-  let regFullName = fullName;
-  let regStudentId = studentId;
+  let regFullName = null;
+  let regStudentId = null;
 
   if (regRaw) {
     const reg = JSON.parse(regRaw);
     passwordHash = reg.passwordHash;
-    regFullName = reg.fullName || fullName;
-    regStudentId = reg.studentId || studentId;
+    regFullName = reg.fullName || null;
+    regStudentId = reg.studentId || null;
     await redis.del(`reg:${email}`);
   }
 
@@ -419,28 +424,27 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   const newHash = await hashPassword(password);
 
-  // Atomically: update password, mark token used, invalidate other outstanding tokens, drop sessions.
-  await query('BEGIN');
-  try {
-    await query(
+  // Atomically: update password, mark token used, invalidate other outstanding
+  // tokens. Must run on a single pooled client — using withTransaction rather
+  // than bare query('BEGIN') ensures BEGIN/UPDATE/COMMIT all hit the SAME
+  // connection (a raw query('BEGIN') can otherwise leak an open transaction
+  // onto an arbitrary pooled client).
+  await withTransaction(async (client) => {
+    await client.query(
       `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
       [newHash, row.user_id]
     );
-    await query(
+    await client.query(
       `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
       [row.id]
     );
-    await query(
+    await client.query(
       `UPDATE password_reset_tokens
           SET used_at = NOW()
         WHERE user_id = $1 AND used_at IS NULL AND id <> $2`,
       [row.user_id, row.id]
     );
-    await query('COMMIT');
-  } catch (err) {
-    await query('ROLLBACK');
-    throw err;
-  }
+  });
 
   // Force re-auth everywhere by dropping the session.
   await redis.del(KEYS.session(row.user_id));

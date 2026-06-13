@@ -96,6 +96,15 @@ export const auth = {
   verifyOtp: (data) =>
     fetchApi('/api/auth/verify-otp', { method: 'POST', body: data }),
 
+  forgotPassword: (email) =>
+    fetchApi('/api/auth/forgot-password', { method: 'POST', body: { email } }),
+
+  resetPassword: (token, password) =>
+    fetchApi('/api/auth/reset-password', { method: 'POST', body: { token, password } }),
+
+  changePassword: (currentPassword, newPassword) =>
+    fetchApi('/api/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
+
   logout: () =>
     fetchApi('/api/auth/logout', { method: 'POST' }),
 

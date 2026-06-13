@@ -45,9 +45,14 @@ export default function ElectionPage() {
       const r = await electionsApi.results(id).catch(() => ({ results: [] }));
       setResults(r.results || []);
     } catch (err) {
-      // If vote fails, allow the user to retry (but only if the server
-      // rejected it — a duplicate error means they truly have voted)
-      if (!err.message?.toLowerCase().includes('already voted')) {
+      // Keep the vote locked only when the server confirms the ballot already
+      // exists (duplicate). For any other failure (network, rate-limit, 5xx),
+      // revert so the user can retry. Key off the error code, not message text.
+      const alreadyVoted =
+        err.code === 'ALREADY_VOTED' ||
+        err.code === 'DUPLICATE_VOTE' ||
+        err.status === 409;
+      if (!alreadyVoted) {
         setHasVoted(false);
       }
       throw err;
@@ -221,10 +226,10 @@ export default function ElectionPage() {
                   <LiveTally
                     electionId={id}
                     initialResults={results.map(r => ({
-                      id: r.id,
-                      name: r.name,
+                      id: r.candidateId,
+                      name: r.candidateName,
                       position: r.position,
-                      voteCount: parseInt(r.vote_count || 0, 10),
+                      voteCount: parseInt(r.votes || 0, 10),
                     }))}
                   />
                 </div>

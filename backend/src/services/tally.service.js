@@ -1,4 +1,5 @@
 const { redis, KEYS, CHANNELS } = require('../config/redis');
+const { query } = require('../config/database');
 
 /**
  * Tally Service
@@ -81,24 +82,39 @@ async function getElectionTally(electionId, candidateIds) {
  * @returns {Promise<Array>} Sorted results array
  */
 async function getFormattedResults(electionId, candidates) {
-  const candidateIds = candidates.map(c => c.id);
-  const tally = await getElectionTally(electionId, candidateIds);
-  
+  // Source of truth is the `ballots` table, NOT the Redis tally. Redis powers
+  // live socket increments but can legitimately be empty (Redis restart/flush,
+  // or ballots created outside the live path such as seeds), which would make
+  // the official results endpoint report 0. Counting from the DB guarantees the
+  // returned totals are always correct.
+  const countResult = await query(
+    `SELECT candidate_id, COUNT(*)::int AS votes
+       FROM ballots
+      WHERE election_id = $1
+      GROUP BY candidate_id`,
+    [electionId]
+  );
+
+  const tally = {};
+  for (const row of countResult.rows) {
+    tally[row.candidate_id] = row.votes;
+  }
+
   const totalVotes = Object.values(tally).reduce((sum, count) => sum + count, 0);
-  
+
   const results = candidates.map(candidate => ({
     candidateId: candidate.id,
     candidateName: candidate.name,
     position: candidate.position,
     votes: tally[candidate.id] || 0,
-    percentage: totalVotes > 0 
-      ? Math.round((tally[candidate.id] / totalVotes) * 10000) / 100 
+    percentage: totalVotes > 0
+      ? Math.round(((tally[candidate.id] || 0) / totalVotes) * 10000) / 100
       : 0,
   }));
-  
+
   // Sort by vote count descending
   results.sort((a, b) => b.votes - a.votes);
-  
+
   return {
     electionId,
     totalVotes,

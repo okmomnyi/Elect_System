@@ -1,23 +1,6 @@
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: voting-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-voting_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-voting_db}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backend/src/db/migrations:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voting_user} -d ${POSTGRES_DB:-voting_db}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - voting-network
+  # PostgreSQL is hosted externally on Neon (see DATABASE_URL in .env).
+  # No local postgres container — migrations/seed/app all connect to Neon over TLS.
 
   # Redis Cache and Pub/Sub
   redis:
@@ -53,7 +36,23 @@ services:
     networks:
       - voting-network
 
-  # One-shot seeder — runs seed SQL then exits (restart: "no")
+  # One-shot migrator — applies pending migrations then exits (restart: "no").
+  # Tracks applied files in schema_migrations, so it is safe to run on every boot.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: voting-migrate
+    restart: "no"
+    command: ["node", "scripts/migrate.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL}
+    networks:
+      - voting-network
+
+  # One-shot seeder — runs seed SQL then exits (restart: "no").
+  # Runs only after migrations have applied successfully.
   seeder:
     build:
       context: ./backend
@@ -63,26 +62,26 @@ services:
     command: ["node", "scripts/seed.js"]
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://${POSTGRES_USER:-voting_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-voting_db}
+      DATABASE_URL: ${DATABASE_URL}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - voting-network
 
   # Backend API Server
+  # No container_name so it can be horizontally scaled: docker compose up --scale backend=N
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: voting-backend
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-@university.edu}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-voting_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-voting_db}
+      DATABASE_URL: ${DATABASE_URL}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-voting_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672
@@ -98,12 +97,12 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@university.edu}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-System Administrator}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health | grep -q '\"status\":\"ok\"'"]
       interval: 30s
@@ -114,18 +113,18 @@ services:
       - voting-network
 
   # Worker Service (RabbitMQ Consumer)
+  # No container_name so it can be scaled: docker compose up --scale worker=N
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: voting-worker
     restart: unless-stopped
     command: ["node", "src/worker.js"]
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-@university.edu}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-voting_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-voting_db}
+      DATABASE_URL: ${DATABASE_URL}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-voting_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672
@@ -141,14 +140,18 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@university.edu}
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-System Administrator}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      disable: true
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health | grep -q '\"status\":\"ok\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - voting-network
 
@@ -189,7 +192,6 @@ services:
       - voting-network
 
 volumes:
-  postgres_data:
   redis_data:
   rabbitmq_data:
 

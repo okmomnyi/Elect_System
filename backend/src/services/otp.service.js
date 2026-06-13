@@ -2,15 +2,19 @@ const crypto = require('crypto');
 const { redis, KEYS, TTL } = require('../config/redis');
 
 /**
- * Atomically GET the value at KEYS[1] and DELETE it in the same round-trip.
- * Prevents two concurrent verify requests from both reading the same OTP before
- * either deletes it (race condition that would allow one OTP to open two sessions).
+ * Atomically DELETE the OTP key only if its current value still equals ARGV[1].
+ * Used to *consume* an OTP after a verified match: this preserves the anti-replay
+ * guarantee (an OTP can open at most one session) while ensuring that a wrong
+ * guess never deletes the code — so a single mistyped digit doesn't force the
+ * user to request a brand-new OTP. Returns 1 if it deleted, 0 otherwise.
  * Compatible with Redis 2.6+.
  */
-const GET_AND_DELETE_SCRIPT = `
-  local v = redis.call('GET', KEYS[1])
-  if v ~= false then redis.call('DEL', KEYS[1]) end
-  return v
+const COMPARE_AND_DELETE_SCRIPT = `
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  else
+    return 0
+  end
 `;
 
 /**
@@ -106,39 +110,58 @@ async function verifyOtp(email, submittedOtp) {
     return { valid: false, error: 'Too many attempts. Please request a new OTP.' };
   }
 
-  // Atomically read AND delete the OTP in a single Lua round-trip.
-  // If two requests race here, only one will receive the value; the second
-  // gets null and is rejected — preventing the same OTP from opening two sessions.
-  const raw = await redis.eval(GET_AND_DELETE_SCRIPT, 1, KEYS.verify(email));
+  // Read the OTP WITHOUT deleting it. A wrong guess must not destroy the code,
+  // otherwise a single mistyped digit forces the user to request a new OTP.
+  const raw = await redis.get(KEYS.verify(email));
 
   if (!raw) {
     return { valid: false, error: 'OTP expired or not requested' };
   }
 
-  const otpData = JSON.parse(raw);
+  let otpData;
+  try {
+    otpData = JSON.parse(raw);
+  } catch {
+    await redis.del(KEYS.verify(email));
+    return { valid: false, error: 'OTP expired or not requested' };
+  }
 
   // Check expiry (belt-and-suspenders; Redis TTL already handles this)
   if (Date.now() > otpData.expires) {
+    await redis.del(KEYS.verify(email));
     return { valid: false, error: 'OTP has expired' };
   }
 
   // Constant-time comparison to prevent timing attacks
   const storedBuffer = Buffer.from(otpData.otp);
-  const submittedBuffer = Buffer.from(submittedOtp);
+  const submittedBuffer = Buffer.from(String(submittedOtp ?? ''));
 
-  if (storedBuffer.length !== submittedBuffer.length) {
-    await incrementAttempts(email);
-    return { valid: false, error: 'Invalid OTP' };
-  }
-
-  const match = crypto.timingSafeEqual(storedBuffer, submittedBuffer);
+  const match =
+    storedBuffer.length === submittedBuffer.length &&
+    crypto.timingSafeEqual(storedBuffer, submittedBuffer);
 
   if (!match) {
+    // Count the failed guess. With the OTP left intact, the user gets up to 5
+    // attempts against the SAME code before lockout — and an attacker can't
+    // farm fresh codes, since the issued OTP stays put until matched/expired.
     await incrementAttempts(email);
     return { valid: false, error: 'Invalid OTP' };
   }
 
-  // Success
+  // Success — atomically consume the OTP so it can open at most one session.
+  // compare-and-delete by value: if two correct submissions race, only the one
+  // that still sees this exact value wins; the loser is rejected as consumed.
+  const deleted = await redis.eval(
+    COMPARE_AND_DELETE_SCRIPT,
+    1,
+    KEYS.verify(email),
+    raw
+  );
+
+  if (deleted === 0) {
+    return { valid: false, error: 'OTP expired or not requested' };
+  }
+
   await resetAttempts(email);
   return { valid: true };
 }

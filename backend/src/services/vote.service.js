@@ -48,7 +48,20 @@ async function markVotedRedis(userId, electionId) {
  */
 async function getElectionStatus(electionId) {
   const key = KEYS.electionStatus(electionId);
-  return redis.get(key);
+  let status = await redis.get(key);
+
+  if (status === null) {
+    // Cache miss: either the election was created without priming Redis (seed /
+    // direct DB insert) or Redis was restarted/flushed (it holds no durable
+    // truth). Fall back to the authoritative DB status and repopulate the cache
+    // so voting stays available across Redis evictions instead of failing closed.
+    const result = await query('SELECT status FROM elections WHERE id = $1', [electionId]);
+    if (result.rows.length === 0) return null;
+    status = result.rows[0].status;
+    await redis.set(key, status);
+  }
+
+  return status;
 }
 
 /**

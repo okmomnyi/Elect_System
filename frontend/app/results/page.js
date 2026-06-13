@@ -64,8 +64,8 @@ function ElectionResultCard({ election }) {
     if (!results) loadResults();
   }
 
-  const winner = results?.candidates?.sort((a, b) => b.vote_count - a.vote_count)[0];
-  const totalVotes = results?.candidates?.reduce((s, c) => s + (c.vote_count || 0), 0) || 0;
+  const winner = results?.results ? [...results.results].sort((a, b) => b.votes - a.votes)[0] : null;
+  const totalVotes = results?.results?.reduce((s, c) => s + (c.votes || 0), 0) || 0;
 
   return (
     <div className="bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/10 overflow-hidden transition-all">
@@ -122,7 +122,7 @@ function ElectionResultCard({ election }) {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
               </svg>
             </div>
-          ) : !results?.candidates?.length ? (
+          ) : !results?.results?.length ? (
             <p className="text-sm text-on-surface-variant text-center py-4">No results available yet.</p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -132,14 +132,14 @@ function ElectionResultCard({ election }) {
                   <span className="inline-block px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded-full text-[10px] font-bold tracking-widest uppercase">
                     Leading / Winner
                   </span>
-                  <h4 className="font-headline font-extrabold text-2xl text-on-primary leading-tight">{winner.name}</h4>
+                  <h4 className="font-headline font-extrabold text-2xl text-on-primary leading-tight">{winner.candidateName}</h4>
                   <div className="flex items-center gap-2">
                     <span className="text-3xl font-bold text-secondary-container">
-                      {totalVotes > 0 ? Math.round((winner.vote_count / totalVotes) * 100) : 0}%
+                      {totalVotes > 0 ? Math.round((winner.votes / totalVotes) * 100) : 0}%
                     </span>
                     <span className="text-primary-fixed-dim text-sm">of votes</span>
                   </div>
-                  <p className="text-primary-fixed-dim text-xs">{winner.vote_count?.toLocaleString()} ballots</p>
+                  <p className="text-primary-fixed-dim text-xs">{winner.votes?.toLocaleString()} ballots</p>
                 </div>
               )}
 
@@ -154,23 +154,23 @@ function ElectionResultCard({ election }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-container-low">
-                    {results.candidates
-                      .sort((a, b) => b.vote_count - a.vote_count)
+                    {[...results.results]
+                      .sort((a, b) => b.votes - a.votes)
                       .map((c, i) => {
-                        const share = totalVotes > 0 ? Math.round((c.vote_count / totalVotes) * 100) : 0;
+                        const share = totalVotes > 0 ? Math.round((c.votes / totalVotes) * 100) : 0;
                         return (
-                          <tr key={c.id} className="hover:bg-surface-container-low transition-colors">
+                          <tr key={c.candidateId} className="hover:bg-surface-container-low transition-colors">
                             <td className="py-3 flex items-center gap-3">
                               <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-xs font-bold text-on-surface-variant flex-shrink-0">
                                 {i + 1}
                               </div>
                               <div>
-                                <p className="font-bold text-primary">{c.name}</p>
+                                <p className="font-bold text-primary">{c.candidateName}</p>
                                 {c.position && <p className="text-[10px] text-on-surface-variant">{c.position}</p>}
                               </div>
                             </td>
                             <td className="py-3 text-right font-mono font-medium text-on-surface">
-                              {(c.vote_count || 0).toLocaleString()}
+                              {(c.votes || 0).toLocaleString()}
                             </td>
                             <td className="py-3 text-right font-bold text-primary">
                               {share}%
@@ -360,7 +360,7 @@ export default function ResultsPage() {
           { href: '/dashboard',  icon: 'ballot',    label: 'Elections',  active: false },
           { href: '/results',    icon: 'analytics', label: 'Results',    active: true  },
           { href: '/candidates', icon: 'groups',    label: 'Candidates', active: false },
-          { href: '/login',      icon: 'person',    label: 'Profile',    active: false },
+          { href: '/settings',   icon: 'person',    label: 'Profile',    active: false },
         ].map(({ href, icon, label, active }) => (
           <Link
             key={href}

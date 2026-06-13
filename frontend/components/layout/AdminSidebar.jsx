@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { auth } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 
 const navLinks = [
   { href: '/admin',             label: 'Elections',  icon: 'ballot',       exact: true },
@@ -15,9 +15,12 @@ const navLinks = [
 export default function AdminSidebar() {
   const pathname = usePathname();
   const router   = useRouter();
+  const { logout } = useAuth();
 
   async function handleLogout() {
-    try { await auth.logout(); } catch (_) {}
+    // Use the context logout so the cached user state is cleared too —
+    // otherwise a client-side nav back would still see a stale authed user.
+    await logout();
     router.push('/login');
   }
 

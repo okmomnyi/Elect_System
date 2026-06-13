@@ -1,0 +1,165 @@
+# =============================================================================
+# PRODUCTION TLS CONFIG (template)
+# =============================================================================
+# The default nginx.conf serves the app over plain HTTP on :80, which is correct
+# for local/dev. For PRODUCTION, terminate TLS at nginx using this file:
+#
+#   1. Obtain certificates (Let's Encrypt / your CA) and place them at:
+#        nginx/ssl/fullchain.pem
+#        nginx/ssl/privkey.pem
+#   2. Mount the ssl dir and this file in docker-compose.yml under the nginx svc:
+#        volumes:
+#          - ./nginx/nginx.tls.conf.example:/etc/nginx/nginx.conf:ro
+#          - ./nginx/ssl:/etc/nginx/ssl:ro
+#   3. Set NODE_ENV=production so the backend advertises HSTS (only safe once TLS
+#      is actually terminated here).
+#
+# The upstreams/locations below mirror nginx.conf; only the TLS + redirect and
+# the HSTS header differ.
+# =============================================================================
+
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 4096;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # HSTS at the edge (TLS is terminated here). 1 year, includeSubDomains.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    limit_req_zone $binary_remote_addr zone=auth:10m    rate=5r/s;
+    limit_req_zone $binary_remote_addr zone=api:10m     rate=50r/s;
+    limit_req_zone $binary_remote_addr zone=general:10m rate=100r/s;
+    limit_conn_zone $binary_remote_addr zone=addr:10m;
+
+    upstream backend_api {
+        least_conn;
+        server backend:3000 weight=1 max_fails=3 fail_timeout=30s;
+        keepalive 32;
+    }
+    upstream backend_ws {
+        ip_hash;
+        server backend:3000;
+        keepalive 16;
+    }
+    upstream frontend_app {
+        server frontend:3000;
+        keepalive 16;
+    }
+
+    # ---- HTTP :80 — redirect everything to HTTPS -------------------------------
+    server {
+        listen 80;
+        server_name _;
+        # Allow ACME http-01 challenges if using certbot webroot.
+        location /.well-known/acme-challenge/ { root /var/www/certbot; }
+        location / { return 301 https://$host$request_uri; }
+    }
+
+    # ---- HTTPS :443 — the real server ------------------------------------------
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name _;
+
+        ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
+
+        client_max_body_size 10M;
+        limit_conn addr 100;
+
+        location /health {
+            proxy_pass http://backend_api/health;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+        }
+
+        location /api/auth/ {
+            limit_req zone=auth burst=5 nodelay;
+            proxy_pass http://backend_api;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /api/ {
+            limit_req zone=api burst=20 nodelay;
+            proxy_pass http://backend_api;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        location /socket.io/ {
+            proxy_pass http://backend_ws;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 7d;
+            proxy_send_timeout 7d;
+            proxy_read_timeout 7d;
+        }
+
+        location /_next/static/ {
+            proxy_pass http://frontend_app;
+            add_header Cache-Control "public, max-age=31536000, immutable";
+        }
+
+        location / {
+            limit_req zone=general burst=50 nodelay;
+            proxy_pass http://frontend_app;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html { root /usr/share/nginx/html; internal; }
+    }
+}
